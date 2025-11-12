@@ -54,6 +54,10 @@ def download_media(media_url: str) -> bytes:
 def send_whatsapp_message(to_number: str, message: str):
     """Send a text message via WhatsApp"""
     try:
+        # Make sure to_number has whatsapp: prefix
+        if not to_number.startswith('whatsapp:'):
+            to_number = f'whatsapp:{to_number}'
+        
         message = twilio_client.messages.create(
             from_=TWILIO_WHATSAPP_NUMBER,
             body=message,
