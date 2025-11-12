@@ -46,7 +46,7 @@ except ImportError:
 # ============================================
 # CONFIGURATION
 # ============================================
-API_KEY = os.getenv("OPENAI_API_KEY", "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")
+API_KEY = os.getenv("OPENAI_API_KEY", "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")
 
 if not API_KEY:
     raise ValueError("API key not found")
@@ -1193,11 +1193,36 @@ EXAMPLE (when current is math-only):
 - You MUST reply in Hinglish mixing pattern: "Yeh ek expression hai. Isse solve karne ke liye..."
 - NEVER switch to pure English when context shows Hindi/Hinglish!
 
-RENDER DECISION (strict):
-• **First line MUST be exactly `<render:text>` or `<render:image>`.**
-• Use `<render:image>` if: \\frac, \\sqrt, \\int, \\sum, \\lim, \\matrix, \\cases, or 2+ equations.
-• Use `<render:image>` for ANY problem involving formulas, calculations, or multi-step math.
-• Use `<render:text>` for simple math: x², 3x+5, single numbers.
+RENDER DECISION - Understanding WhatsApp's Technical Limitations:
+
+WhatsApp is a PLAIN TEXT messenger with these hard technical constraints:
+1. NO vertical fraction display - (x³/3) appears inline, not stacked
+2. NO proper superscript/subscript stacking - ∫₀¹ renders as ∫01 with misaligned numbers
+3. Unicode limits DON'T stack above/below symbols - they appear inline and look broken
+4. Complex expressions become parenthesis soup - (((x-3)/(x+2))^2) is unreadable
+5. Font inconsistencies - superscript ¹²³ may render in different font than ⁴⁵⁶⁷⁸⁹⁰
+6. NO LaTeX, NO MathML, NO HTML formatting support
+
+**Your decision: Will this math be CLEARLY READABLE in plain text WhatsApp?**
+
+Use `<render:image>` when the answer is NO:
+- Integration (∫ with bounds) - limits don't stack, looks broken
+- Fractions (except simple like 1/2) - vertical fractions impossible
+- Any expression with multiple levels of super/subscripts
+- Summations (∑), products (∏) with bounds
+- Derivatives with notation
+- Multi-step derivations (2+ equations)
+- Physics formulas (F=ma is OK, but E=mc² with complex terms isn't)
+- Anything requiring vertical alignment
+
+Use `<render:text>` ONLY when answer is YES:
+- Basic arithmetic: 2+2, 15×3
+- Simple linear equations: 2x+5=11, solve for x
+- Single expressions: x², 3x-7, 2πr
+- Basic formulas without complex notation: F=ma, PV=nRT
+
+**When uncertain → ALWAYS choose `<render:image>`**
+**First line MUST be exactly: `<render:text>` or `<render:image>`**
 
 • **CRITICAL FORMATTING:**
   - For `<render:image>`: Use ONLY $$...$$ for display math (double dollars)
@@ -1393,10 +1418,27 @@ LANGUAGE RULE - FOLLOW EXACTLY:
 
 {context_block}
 
-RENDER DECISION:
-• **First line: `<render:text>` or `<render:image>`**
-• Use `<render:image>` for: \\frac, \\sqrt, \\int, \\sum, \\lim, or 2+ equations
-• Use `<render:text>` for simple math
+RENDER DECISION - WhatsApp's Technical Limitations:
+
+WhatsApp plain text has hard constraints:
+- NO vertical fractions or stacked notation
+- Unicode limits appear inline, not above/below symbols
+- Complex expressions = unreadable parenthesis nests
+- NO LaTeX/MathML/HTML support
+
+**Use `<render:image>` when math won't be clearly readable in plain text:**
+- Integration, fractions (except 1/2 style)
+- Summations/products with bounds
+- Multi-level super/subscripts
+- Multi-step problems
+- Complex physics/calculus notation
+
+**Use `<render:text>` ONLY for simple cases:**
+- Basic arithmetic, simple equations
+- Single expressions like x² or 3x-7
+
+**When uncertain → use `<render:image>`**
+**First line MUST be: `<render:text>` or `<render:image>`**
 
 • **CRITICAL FORMATTING:**
   - For `<render:image>`: Use ONLY $$...$$ (double dollars)
