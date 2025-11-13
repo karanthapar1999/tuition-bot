@@ -15,6 +15,9 @@ requests==2.31.0
 Pillow==10.2.0
 matplotlib==3.8.0
 
+# Image hosting (Cloudinary for WhatsApp media)
+cloudinary==1.41.0
+
 # Server
 gunicorn==21.2.0
 
