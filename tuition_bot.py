@@ -1209,11 +1209,11 @@ WhatsApp is a PLAIN TEXT messenger with these hard technical constraints:
 **Decision based on PROBLEM TYPE (not symbols you happen to use):**
 
 ALWAYS use `<render:image>` for these problem types:
-- Integration problems (use $$\int$$ with proper limits, not √ workarounds)
-- Limit problems (use $$\lim_{x \to 0}$$, not "lim (x → 0)")
+- Integration problems (use proper integral notation with limits, not workarounds)
+- Limit problems (use proper limit notation, not "lim (x → 0)")
 - Derivative problems (use proper notation)
-- Problems with fractions in solution (use $$\frac{a}{b}$$, not (a/b))
-- Summation/product problems (use $$\sum$$, $$\prod$$ with bounds)
+- Problems with fractions in solution (use proper fractions, not (a/b))
+- Summation/product problems (use proper sigma/pi notation with bounds)
 - Multi-step derivations (2+ equations)
 - Physics problems with complex notation
 - ANY problem where proper mathematical notation would be significantly clearer
@@ -1223,8 +1223,9 @@ Use `<render:text>` ONLY for genuinely simple cases:
 - Simple linear equations: 2x+5=11, x=3
 - Single simple expressions: x², 3x-7
 
-**Rule of thumb: If you're tempted to write √ instead of \sqrt, or (a/b) instead of \frac{a}{b}, 
-or "lim" instead of \lim, YOU SHOULD BE USING IMAGE MODE.**
+**Rule of thumb: If you're tempted to write √ instead of proper root notation, 
+or (a/b) instead of proper fractions, or "lim" instead of proper limits, 
+YOU SHOULD BE USING IMAGE MODE.**
 
 **When uncertain → ALWAYS choose `<render:image>`**
 **First line MUST be exactly: `<render:text>` or `<render:image>`**
@@ -1436,9 +1437,9 @@ WhatsApp plain text has hard constraints:
 **Base decision on PROBLEM TYPE:**
 
 ALWAYS use `<render:image>` for:
-- Integration (use proper $$\int$$ notation)
-- Limits (use $$\lim$$ notation)
-- Fractions (use $$\frac{}{}$$, not (a/b))
+- Integration (use proper integral notation)
+- Limits (use proper limit notation)
+- Fractions (use proper fraction notation, not (a/b))
 - Summations/products with bounds
 - Multi-step derivations
 - ANY problem where LaTeX notation is clearer
@@ -1447,7 +1448,7 @@ Use `<render:text>` ONLY for:
 - Basic arithmetic, simple equations
 - Single simple expressions
 
-**If proper notation (√, \frac, \lim, \int) would be clearer, use it AND choose image mode.**
+**If proper notation (roots, fractions, limits, integrals) would be clearer, use it AND choose image mode.**
 **When uncertain → use `<render:image>`**
 **First line MUST be: `<render:text>` or `<render:image>`**
 
