@@ -1,220 +1,297 @@
 """
-WhatsApp Webhook Server for Tuition Bot
-========================================
-Handles incoming messages from Twilio WhatsApp and routes them to the tuition bot.
+WhatsApp Webhook with Cloudinary Image Hosting
+==============================================
+
+Handles incoming WhatsApp messages via Twilio and sends responses.
+Images are uploaded to Cloudinary for delivery.
+
+Author: Gotham AI
+Version: 2.0 - Production with Cloudinary
 """
 
 import os
+import io
+import hashlib
+from datetime import datetime
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
-import requests
-from io import BytesIO
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 
-# Import your bot
+# Import bot functions
 from tuition_bot import process_message, process_image
 
 # ============================================
 # CONFIGURATION
 # ============================================
+app = Flask(__name__)
 
-# TWILIO CREDENTIALS - Get these from Twilio Console
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "YOUR_ACCOUNT_SID_HERE")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "YOUR_AUTH_TOKEN_HERE")
-TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "whatsapp:+14155238886")  # Sandbox number
+# Twilio credentials
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
 
-# Webhook verification token (you set this)
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "my_secret_token_123")
+# Cloudinary credentials
+CLOUDINARY_CLOUD_NAME = os.getenv('CLOUDINARY_CLOUD_NAME')
+CLOUDINARY_API_KEY = os.getenv('CLOUDINARY_API_KEY')
+CLOUDINARY_API_SECRET = os.getenv('CLOUDINARY_API_SECRET')
+
+# Configure Cloudinary
+cloudinary.config(
+    cloud_name=CLOUDINARY_CLOUD_NAME,
+    api_key=CLOUDINARY_API_KEY,
+    api_secret=CLOUDINARY_API_SECRET,
+    secure=True
+)
 
 # Initialize Twilio client
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-# Initialize Flask app
-app = Flask(__name__)
+DEBUG_MODE = os.getenv('DEBUG_MODE', 'False').lower() == 'true'
 
 # ============================================
-# HELPER FUNCTIONS
+# CLOUDINARY IMAGE UPLOAD
 # ============================================
-
-def download_media(media_url: str) -> bytes:
-    """Download media from Twilio's URL"""
-    try:
-        # Twilio requires authentication to download media
-        response = requests.get(
-            media_url,
-            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-            timeout=30
-        )
-        response.raise_for_status()
-        return response.content
-    except Exception as e:
-        print(f"Error downloading media: {e}")
-        return None
-
-def send_whatsapp_message(to_number: str, message: str):
-    """Send a text message via WhatsApp"""
-    try:
-        # Make sure to_number has whatsapp: prefix
-        if not to_number.startswith('whatsapp:'):
-            to_number = f'whatsapp:{to_number}'
-        
-        message = twilio_client.messages.create(
-            from_=TWILIO_WHATSAPP_NUMBER,
-            body=message,
-            to=to_number
-        )
-        print(f"Sent message: {message.sid}")
-        return message.sid
-    except Exception as e:
-        print(f"Error sending message: {e}")
-        return None
-
-def send_whatsapp_image(to_number: str, image_bytes: bytes, caption: str = ""):
-    """Send an image via WhatsApp"""
-    try:
-        # Save image temporarily (Twilio needs a URL)
-        # For production, upload to S3/Cloud Storage
-        # For now, we'll send as base64 in the message (not ideal but works for testing)
-        
-        # Better approach: Use Twilio's media URL
-        # For testing, just send the caption text with a note
-        message_text = f"{caption}\n\n[Image solution generated - will send as separate message in production]"
-        
-        message = twilio_client.messages.create(
-            from_=TWILIO_WHATSAPP_NUMBER,
-            body=message_text,
-            to=to_number
-        )
-        print(f"Sent image message: {message.sid}")
-        return message.sid
-    except Exception as e:
-        print(f"Error sending image: {e}")
-        return None
-
-# ============================================
-# WEBHOOK ENDPOINTS
-# ============================================
-
-@app.route("/webhook", methods=["GET"])
-def verify_webhook():
-    """Verify webhook for initial setup"""
-    token = request.args.get("hub.verify_token")
-    challenge = request.args.get("hub.challenge")
+def upload_image_to_cloudinary(image_bytes: bytes, user_phone: str) -> str:
+    """
+    Upload image to Cloudinary and return public URL.
     
-    if token == VERIFY_TOKEN:
-        return challenge
-    return "Invalid verification token", 403
+    Args:
+        image_bytes: PNG image data
+        user_phone: User's phone number (for organizing uploads)
+        
+    Returns:
+        str: Public URL of uploaded image
+    """
+    try:
+        # Create unique filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        phone_hash = hashlib.md5(user_phone.encode()).hexdigest()[:8]
+        filename = f"math_solution_{phone_hash}_{timestamp}"
+        
+        # Upload to Cloudinary
+        # Using 'tuition_bot' folder to organize images
+        upload_result = cloudinary.uploader.upload(
+            image_bytes,
+            folder="tuition_bot",
+            public_id=filename,
+            resource_type="image",
+            format="png",
+            overwrite=True,
+            # Auto-delete after 7 days to save space (optional)
+            # Remove this line if you want to keep images forever
+            tags=["math", "tuition", "temp"]
+        )
+        
+        # Return secure URL
+        return upload_result['secure_url']
+        
+    except Exception as e:
+        print(f"❌ Cloudinary upload error: {e}")
+        raise
 
-@app.route("/webhook", methods=["POST"])
+# ============================================
+# TWILIO MESSAGE SENDING
+# ============================================
+def send_whatsapp_message(to_phone: str, message: str, media_url: str = None):
+    """
+    Send WhatsApp message via Twilio.
+    
+    Args:
+        to_phone: Recipient phone number (format: whatsapp:+1234567890)
+        message: Text message to send
+        media_url: Optional image URL to attach
+    """
+    try:
+        # Format phone number
+        if not to_phone.startswith('whatsapp:'):
+            to_phone = f"whatsapp:{to_phone}"
+        
+        from_phone = f"whatsapp:{TWILIO_PHONE_NUMBER}"
+        
+        # Send message with optional media
+        message_params = {
+            'from_': from_phone,
+            'to': to_phone,
+            'body': message
+        }
+        
+        if media_url:
+            message_params['media_url'] = [media_url]
+        
+        msg = twilio_client.messages.create(**message_params)
+        
+        if DEBUG_MODE:
+            print(f"✅ Message sent: {msg.sid}")
+            if media_url:
+                print(f"📸 Media attached: {media_url}")
+        
+        return msg.sid
+        
+    except Exception as e:
+        print(f"❌ Twilio send error: {e}")
+        raise
+
+# ============================================
+# WEBHOOK ROUTES
+# ============================================
+@app.route('/')
+def home():
+    """Health check endpoint"""
+    return '''
+    <html>
+        <body style="font-family: Arial; padding: 40px; text-align: center;">
+            <h1>🎓 WhatsApp Tuition Bot</h1>
+            <p style="color: green; font-size: 18px;">✅ Server is running!</p>
+            <p>Webhook endpoint: <code>/webhook</code></p>
+            <hr style="margin: 40px 0;">
+            <p style="color: gray; font-size: 12px;">
+                Powered by OpenAI GPT-4 | Images via Cloudinary | Messages via Twilio
+            </p>
+        </body>
+    </html>
+    '''
+
+@app.route('/webhook', methods=['POST'])
 def webhook():
-    """Main webhook endpoint for incoming WhatsApp messages"""
+    """
+    Main webhook endpoint for incoming WhatsApp messages.
+    Handles both text and image messages, uploads math images to Cloudinary.
+    """
     try:
         # Get incoming message data
-        incoming_msg = request.values.get('Body', '').strip()
-        from_number = request.values.get('From', '')
-        media_url = request.values.get('MediaUrl0', '')  # First media attachment
-        media_content_type = request.values.get('MediaContentType0', '')
+        from_phone = request.values.get('From', '')
+        message_body = request.values.get('Body', '').strip()
+        num_media = int(request.values.get('NumMedia', 0))
         
-        # Extract just the phone number (remove 'whatsapp:' prefix)
-        phone = from_number.replace('whatsapp:', '')
+        # Extract phone number (remove 'whatsapp:' prefix)
+        phone = from_phone.replace('whatsapp:', '')
         
-        print(f"\n{'='*60}")
-        print(f"📱 Incoming from: {phone}")
-        print(f"📝 Message: {incoming_msg}")
-        print(f"🖼️  Media: {media_url}")
-        print(f"{'='*60}\n")
+        if DEBUG_MODE:
+            print("=" * 60)
+            print(f"📱 Incoming from: {phone}")
+            print(f"📝 Message: {message_body}")
+            print(f"🖼️  Media: {num_media}")
+            print("=" * 60)
         
-        # Initialize response
-        resp = MessagingResponse()
-        
-        # Handle image messages
-        if media_url and 'image' in media_content_type:
-            print("Processing image message...")
+        # Process message
+        if num_media > 0:
+            # Handle image message
+            media_url = request.values.get('MediaUrl0')
+            media_content_type = request.values.get('MediaContentType0', '')
             
-            # Download the image
-            image_bytes = download_media(media_url)
+            if DEBUG_MODE:
+                print(f"Processing image: {media_url}")
             
-            if image_bytes:
-                # Process image with bot
-                caption = incoming_msg if incoming_msg else ""
-                response_dict = process_image(phone, image_bytes, caption)
-                
-                # Send response
-                if 'image_bytes' in response_dict:
-                    # Bot generated an image solution
-                    send_whatsapp_message(phone, response_dict['text'])
-                    # TODO: Upload image to cloud storage and send URL
-                    # For now, text response includes the solution
-                else:
-                    # Text-only response
-                    resp.message(response_dict['text'])
-            else:
-                resp.message("I couldn't download that image. Please try sending it again.")
-        
-        # Handle text messages
-        elif incoming_msg:
-            print("Processing text message...")
+            # Download image
+            import requests
+            img_response = requests.get(media_url)
+            image_bytes = img_response.content
             
-            # Process text with bot
-            response_dict = process_message(phone, incoming_msg)
-            
-            # Send response
-            if 'image_bytes' in response_dict:
-                # Bot generated an image solution
-                send_whatsapp_message(phone, response_dict['text'])
-                # TODO: Upload image to cloud storage and send URL
-            else:
-                # Text-only response
-                resp.message(response_dict['text'])
-        
+            # Process with bot
+            response = process_image(phone, image_bytes, message_body)
         else:
-            resp.message("Please send a text message or image.")
+            # Handle text message
+            if DEBUG_MODE:
+                print("Processing text message...")
+            
+            response = process_message(phone, message_body)
         
-        return str(resp)
-    
+        # Send response
+        if 'image_bytes' in response:
+            # Bot generated a math image - upload to Cloudinary
+            if DEBUG_MODE:
+                print("📐 Uploading math solution image to Cloudinary...")
+            
+            try:
+                # Upload to Cloudinary
+                image_url = upload_image_to_cloudinary(
+                    response['image_bytes'], 
+                    phone
+                )
+                
+                if DEBUG_MODE:
+                    print(f"✅ Image uploaded: {image_url}")
+                
+                # Send message with image
+                send_whatsapp_message(
+                    phone,
+                    response['text'],
+                    media_url=image_url
+                )
+                
+            except Exception as e:
+                # If image upload fails, send text-only response
+                print(f"⚠️  Image upload failed, sending text only: {e}")
+                send_whatsapp_message(phone, response['text'])
+        else:
+            # Text-only response
+            send_whatsapp_message(phone, response['text'])
+        
+        # Return empty TwiML response (we're sending via API)
+        return '', 200
+        
     except Exception as e:
-        print(f"Error processing webhook: {e}")
+        print(f"❌ Webhook error: {e}")
         import traceback
         traceback.print_exc()
         
-        resp = MessagingResponse()
-        resp.message("Sorry, I encountered an error. Please try again.")
-        return str(resp)
+        # Send error message to user
+        try:
+            send_whatsapp_message(
+                phone,
+                "Sorry, I encountered an error. Please try again in a moment."
+            )
+        except:
+            pass
+        
+        return '', 500
 
-@app.route("/health", methods=["GET"])
-def health_check():
-    """Health check endpoint"""
-    return {"status": "ok", "service": "whatsapp-tuition-bot"}
-
-@app.route("/", methods=["GET"])
-def home():
-    """Home page"""
-    return """
-    <h1>🎓 WhatsApp Tuition Bot</h1>
-    <p>Bot is running!</p>
-    <ul>
-        <li>Webhook endpoint: /webhook</li>
-        <li>Health check: /health</li>
-    </ul>
-    """
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check for monitoring"""
+    return {
+        'status': 'healthy',
+        'service': 'whatsapp-tuition-bot',
+        'cloudinary': 'configured' if CLOUDINARY_CLOUD_NAME else 'not configured',
+        'twilio': 'configured' if TWILIO_ACCOUNT_SID else 'not configured'
+    }, 200
 
 # ============================================
-# RUN SERVER
+# STARTUP
 # ============================================
-
-if __name__ == "__main__":
+if __name__ == '__main__':
+    # Check required environment variables
+    required_vars = [
+        'TWILIO_ACCOUNT_SID',
+        'TWILIO_AUTH_TOKEN', 
+        'TWILIO_PHONE_NUMBER',
+        'CLOUDINARY_CLOUD_NAME',
+        'CLOUDINARY_API_KEY',
+        'CLOUDINARY_API_SECRET',
+        'OPENAI_API_KEY'
+    ]
+    
+    missing = [var for var in required_vars if not os.getenv(var)]
+    
+    if missing:
+        print("⚠️  WARNING: Missing environment variables:")
+        for var in missing:
+            print(f"  - {var}")
+        print("\nSet these in your Render dashboard or .env file")
+    else:
+        print("✅ All environment variables configured")
+    
     print("\n" + "="*60)
-    print("🎓 WhatsApp Tuition Bot Server")
+    print("🎓 WhatsApp Tuition Bot - Starting Server")
     print("="*60)
-    print(f"\n✅ Server starting...")
-    print(f"📱 Twilio WhatsApp: {TWILIO_WHATSAPP_NUMBER}")
-    print(f"\n🔗 Webhook URL (for Twilio): http://your-server.com/webhook")
-    print(f"💚 Health check: http://your-server.com/health")
-    print(f"\n{'='*60}\n")
+    print(f"📡 Cloudinary: {CLOUDINARY_CLOUD_NAME or 'NOT CONFIGURED'}")
+    print(f"📱 Twilio: {TWILIO_PHONE_NUMBER or 'NOT CONFIGURED'}")
+    print(f"🐛 Debug mode: {DEBUG_MODE}")
+    print("="*60 + "\n")
     
     # Run Flask app
-    app.run(
-        host="0.0.0.0",  # Listen on all interfaces
-        port=5000,
-        debug=True
-    )
+    port = int(os.getenv('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=DEBUG_MODE)
