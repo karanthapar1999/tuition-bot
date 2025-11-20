@@ -1285,12 +1285,11 @@ STYLE: No lists, friendly full sentences."""
     messages.append({"role": "user", "content": user_message})
 
     data = {
-    "model": "gpt-5-nano",
-    "messages": messages,
-    "reasoning_effort": "minimal",
-    "verbosity": "medium",
-    "max_tokens": 700
-}
+        "model": "gpt-4o-mini",
+        "messages": messages,
+        "temperature": 0.35,
+        "max_tokens": 700
+    }
 
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
 
@@ -1510,12 +1509,11 @@ STYLE: No lists, friendly tone"""
     messages.append({"role": "user", "content": user_content})
 
     data = {
-    "model": "gpt-5-nano",
-    "messages": messages,
-    "reasoning_effort": "minimal",
-    "verbosity": "medium",
-    "max_tokens": 700
-}
+        "model": "gpt-4o",
+        "messages": messages,
+        "temperature": 0.35,
+        "max_tokens": 700
+    }
 
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
 
