@@ -186,9 +186,19 @@ def webhook():
                 print(f"Processing image: {media_url}")
                 print(f"Image format: {media_content_type}")  # ADD THIS LINE
             # Download image
-            import requests
-            img_response = requests.get(media_url)
-            image_bytes = img_response.content
+import requests
+from requests.auth import HTTPBasicAuth
+
+# Download with Twilio authentication
+img_response = requests.get(
+    media_url,
+    auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+)
+image_bytes = img_response.content
+
+if DEBUG_MODE:
+    print(f"Downloaded {len(image_bytes)} bytes")
+    print(f"Download status: {img_response.status_code}")
             
             # Process with bot
             response = process_image(phone, image_bytes, message_body)
