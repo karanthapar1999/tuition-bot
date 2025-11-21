@@ -184,7 +184,7 @@ def webhook():
             
             if DEBUG_MODE:
                 print(f"Processing image: {media_url}")
-            
+                print(f"Image format: {media_content_type}")  # ADD THIS LINE
             # Download image
             import requests
             img_response = requests.get(media_url)
