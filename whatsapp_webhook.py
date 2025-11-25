@@ -182,7 +182,7 @@ def webhook():
             media_url = request.values.get('MediaUrl0')
             media_content_type = request.values.get('MediaContentType0', '')
             
-           if DEBUG_MODE:
+            if DEBUG_MODE:
                 print(f"Processing image: {media_url}")
                 print(f"Image format: {media_content_type}")
             
