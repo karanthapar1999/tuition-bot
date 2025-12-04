@@ -21,6 +21,9 @@ cloudinary==1.41.0
 # Analytics
 mixpanel==4.10.1
 
+# Error tracking
+sentry-sdk==1.40.0
+
 # Server
 gunicorn==21.2.0
 
