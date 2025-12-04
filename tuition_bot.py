@@ -50,6 +50,24 @@ except ImportError:
     MIXPANEL_ENABLED = False
     print("⚠️  Mixpanel not installed - analytics disabled")
 
+# Error tracking
+try:
+    import sentry_sdk
+    SENTRY_DSN = os.getenv('SENTRY_DSN', '')
+    if SENTRY_DSN:
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            traces_sample_rate=0.1,  # 10% performance monitoring
+            profiles_sample_rate=0.1,  # 10% profiling
+            environment="production",
+            release="tuition-bot@1.6"
+        )
+        print("✅ Sentry error tracking enabled")
+    else:
+        print("⚠️  Sentry DSN not found - error tracking disabled")
+except ImportError:
+    print("⚠️  Sentry not installed - error tracking disabled")
+
 # Image processing (with graceful fallback)
 try:
     import matplotlib
@@ -75,7 +93,15 @@ if not os.getenv("OPENAI_API_KEY"):
 DEBUG_MODE = True  # Set to False in production
 
 API_URL = "https://api.openai.com/v1/chat/completions"
-STORAGE_DIR = Path("bot_storage")
+
+# Storage: Use persistent disk if available, fallback to local
+if Path("/data").exists():
+    STORAGE_DIR = Path("/data/bot_storage")
+    print("✅ Using persistent disk storage: /data/bot_storage")
+else:
+    STORAGE_DIR = Path("bot_storage")
+    print("⚠️  Using ephemeral storage: bot_storage/ (data will be lost on restart!)")
+
 STORAGE_DIR.mkdir(exist_ok=True)
 
 MAX_HISTORY = 15
@@ -1526,6 +1552,14 @@ STYLE: No lists, friendly full sentences."""
 
     except requests.exceptions.Timeout:
         print(f"GPT Tutor Timeout Error after {max_retries} attempts")
+        
+        # Track timeout error
+        track_event('error_timeout', prefs.user_id, {
+            'error_type': 'openai_timeout',
+            'max_retries': max_retries,
+            'language': prefs.language
+        })
+        
         # Return language-appropriate timeout message
         target_lang = detect_language_from_history(prefs)
         if target_lang == "Hinglish":
@@ -1538,6 +1572,14 @@ STYLE: No lists, friendly full sentences."""
             return {"text": "OpenAI is running a bit slow right now. Please wait a moment and try again!"}
     except Exception as e:
         print(f"GPT Tutor Error: {e}")
+        
+        # Track general error
+        track_event('error_gpt_tutor', prefs.user_id, {
+            'error_type': type(e).__name__,
+            'error_message': str(e)[:200],  # First 200 chars
+            'language': prefs.language
+        })
+        
         # Return language-appropriate error message
         target_lang = detect_language_from_history(prefs)
         if target_lang == "Hinglish":
@@ -1847,6 +1889,14 @@ STYLE: No lists, friendly tone"""
 
     except requests.exceptions.Timeout:
         print(f"GPT Image Tutor Timeout Error after {max_retries} attempts")
+        
+        # Track image timeout error
+        track_event('error_image_timeout', prefs.user_id, {
+            'error_type': 'image_processing_timeout',
+            'has_caption': bool(caption_text),
+            'language': prefs.language
+        })
+        
         # Return language-appropriate timeout message
         target_lang = detect_language_from_history(prefs)
         if target_lang == "Hinglish":
@@ -1859,6 +1909,15 @@ STYLE: No lists, friendly tone"""
             return {"text": "The image is taking too long to process. Try a smaller or clearer photo!"}
     except Exception as e:
         print(f"GPT Image Tutor Error: {e}")
+        
+        # Track image processing error
+        track_event('error_image_processing', prefs.user_id, {
+            'error_type': type(e).__name__,
+            'error_message': str(e)[:200],
+            'has_caption': bool(caption_text),
+            'language': prefs.language
+        })
+        
         # Return language-appropriate error message
         target_lang = detect_language_from_history(prefs)
         if target_lang == "Hinglish":
