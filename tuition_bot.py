@@ -33,6 +33,23 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import re
 
+# Analytics
+try:
+    from mixpanel import Mixpanel
+    MIXPANEL_TOKEN = os.getenv('MIXPANEL_TOKEN', '')
+    if MIXPANEL_TOKEN:
+        mp = Mixpanel(MIXPANEL_TOKEN)
+        MIXPANEL_ENABLED = True
+        print("✅ Mixpanel analytics enabled")
+    else:
+        mp = None
+        MIXPANEL_ENABLED = False
+        print("⚠️  Mixpanel token not found - analytics disabled")
+except ImportError:
+    mp = None
+    MIXPANEL_ENABLED = False
+    print("⚠️  Mixpanel not installed - analytics disabled")
+
 # Image processing (with graceful fallback)
 try:
     import matplotlib
@@ -121,6 +138,39 @@ def save_user_preferences(prefs: UserPreferences):
     with open(temp_filepath, 'w', encoding='utf-8') as f:
         json.dump(prefs.to_dict(), f, indent=2, ensure_ascii=False)
     temp_filepath.replace(filepath)
+
+# ============================================
+# ANALYTICS TRACKING
+# ============================================
+def track_event(event_name: str, user_id: str, properties: dict = None):
+    """Track analytics event to Mixpanel"""
+    if not MIXPANEL_ENABLED or not mp:
+        return
+    
+    try:
+        props = properties or {}
+        props['timestamp'] = datetime.now().isoformat()
+        mp.track(user_id, event_name, props)
+        
+        if DEBUG_MODE:
+            print(f"📊 Tracked: {event_name} for user {user_id[:8]}...")
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Analytics error: {e}")
+
+def update_user_profile(user_id: str, properties: dict):
+    """Update user profile in Mixpanel"""
+    if not MIXPANEL_ENABLED or not mp:
+        return
+    
+    try:
+        mp.people_set(user_id, properties)
+        if DEBUG_MODE:
+            print(f"📊 Updated profile for user {user_id[:8]}...")
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Profile update error: {e}")
+
 
 # ============================================
 # IMAGE PROCESSING
@@ -964,6 +1014,13 @@ def handle_onboarding(user_message: str, prefs: UserPreferences) -> Dict:
     if not prefs.name and not prefs.language:
         analysis = analyze_first_message(user_message)
         
+        # Track first message
+        track_event('first_message_sent', prefs.user_id, {
+            'detected_language': analysis.get('detected_language'),
+            'confidence': analysis.get('confidence'),
+            'has_name': bool(analysis.get('name'))
+        })
+        
         if DEBUG_MODE:
             print(f"DEBUG ONBOARDING: Analysis result: {analysis}")
 
@@ -984,6 +1041,22 @@ def handle_onboarding(user_message: str, prefs: UserPreferences) -> Dict:
             if name:
                 prefs.name = name
                 prefs.language_confirmed = True
+                
+                # Track name provided
+                track_event('name_provided', prefs.user_id, {
+                    'name': name,
+                    'language': prefs.language,
+                    'script': prefs.script
+                })
+                
+                # Update user profile
+                update_user_profile(prefs.user_id, {
+                    '$name': name,
+                    'language': prefs.language,
+                    'script': prefs.script,
+                    'language_code': prefs.language_code
+                })
+                
                 prefs.message_history.append({"role": "user", "content": user_message})
                 welcome = generate_welcome(name, prefs.language, prefs.script)
                 prefs.message_history.append({"role": "assistant", "content": welcome})
@@ -1130,6 +1203,14 @@ def call_gpt_tutor(user_message: str, prefs: UserPreferences) -> Dict:
         user_message = user_message[:MAX_MESSAGE_LENGTH] + "..."
     
     current_is_math = is_math_only(user_message)
+    
+    # Track message sent
+    track_event('message_sent', prefs.user_id, {
+        'is_math_only': current_is_math,
+        'language': prefs.language,
+        'message_length': len(user_message),
+        'has_name': bool(prefs.name)
+    })
     
     # Detect language of CURRENT message if it has words
     current_message_language = None
@@ -1357,10 +1438,24 @@ STYLE: No lists, friendly full sentences."""
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
 
     try:
-        response = requests.post(API_URL, headers=headers, json=data, timeout=20)
-        response.raise_for_status()
-        result = response.json()
-        gpt_response = result['choices'][0]['message']['content']
+        # Increased timeout from 20s to 40s and added retry logic
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(API_URL, headers=headers, json=data, timeout=40)
+                response.raise_for_status()
+                result = response.json()
+                gpt_response = result['choices'][0]['message']['content']
+                break  # Success, exit retry loop
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    if DEBUG_MODE:
+                        print(f"Timeout on attempt {attempt + 1}, retrying...")
+                    import time
+                    time.sleep(2)  # Wait 2 seconds before retry
+                    continue
+                else:
+                    raise  # Final attempt failed, raise the timeout error
 
         mode, body = parse_render_tag_and_body(gpt_response)
         
@@ -1429,9 +1524,30 @@ STYLE: No lists, friendly full sentences."""
 
         return result_dict
 
+    except requests.exceptions.Timeout:
+        print(f"GPT Tutor Timeout Error after {max_retries} attempts")
+        # Return language-appropriate timeout message
+        target_lang = detect_language_from_history(prefs)
+        if target_lang == "Hinglish":
+            return {"text": "OpenAI thoda slow hai abhi. Please thoda wait karke phir se try karo!"}
+        elif target_lang == "Hindi":
+            return {"text": "OpenAI अभी थोड़ा धीमा है। कृपया थोड़ी देर प्रतीक्षा करें और फिर से प्रयास करें!"}
+        elif target_lang == "Tamil":
+            return {"text": "OpenAI இப்போது சற்று மெதுவாக உள்ளது. தயவுசெய்து சற்று காத்திருந்து மீண்டும் முயற்சிக்கவும்!"}
+        else:
+            return {"text": "OpenAI is running a bit slow right now. Please wait a moment and try again!"}
     except Exception as e:
         print(f"GPT Tutor Error: {e}")
-        return {"text": "I'm having trouble connecting. Please try again in a moment."}
+        # Return language-appropriate error message
+        target_lang = detect_language_from_history(prefs)
+        if target_lang == "Hinglish":
+            return {"text": "Kuch technical problem aa gayi. Please thodi der baad try karo!"}
+        elif target_lang == "Hindi":
+            return {"text": "कुछ तकनीकी समस्या आ गई है। कृपया थोड़ी देर बाद प्रयास करें!"}
+        elif target_lang == "Tamil":
+            return {"text": "சில தொழில்நுட்ப சிக்கல் ஏற்பட்டுள்ளது. தயவுசெய்து சிறிது நேரம் கழித்து முயற்சிக்கவும்!"}
+        else:
+            return {"text": "I'm having a technical issue. Please try again in a moment!"}
 
 # ============================================
 # IMAGE TUTORING WITH SMART LANGUAGE SWITCHING
@@ -1444,6 +1560,13 @@ def call_gpt_tutor_image(image_data_uri: str, caption_text: str, prefs: UserPref
     - If caption has words: Reply in language of caption
     - If no caption: Reply in language of last 3 non-math messages
     """
+    # Track image sent
+    track_event('image_sent', prefs.user_id, {
+        'has_caption': bool(caption_text and len(caption_text.strip()) > 0),
+        'caption_length': len(caption_text) if caption_text else 0,
+        'language': prefs.language
+    })
+    
     # Build context with language anchors
     _, language_context = build_context_with_language_anchors(prefs)
     
@@ -1648,10 +1771,25 @@ STYLE: No lists, friendly tone"""
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
 
     try:
-        response = requests.post(API_URL, headers=headers, json=data, timeout=30)
-        response.raise_for_status()
-        j = response.json()
-        gpt_response = (j.get("choices") or [{}])[0].get("message", {}).get("content")
+        # Increased timeout to 50s for image processing (GPT-4o with images is slower)
+        # Added retry logic
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(API_URL, headers=headers, json=data, timeout=50)
+                response.raise_for_status()
+                j = response.json()
+                gpt_response = (j.get("choices") or [{}])[0].get("message", {}).get("content")
+                break  # Success, exit retry loop
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    if DEBUG_MODE:
+                        print(f"Image timeout on attempt {attempt + 1}, retrying...")
+                    import time
+                    time.sleep(2)  # Wait 2 seconds before retry
+                    continue
+                else:
+                    raise  # Final attempt failed, raise the timeout error
 
         if not gpt_response:
             return {"text": "I couldn't read that image. Please resend a clearer photo with good lighting on a flat surface."}
@@ -1708,10 +1846,29 @@ STYLE: No lists, friendly tone"""
         return result_dict
 
     except requests.exceptions.Timeout:
-        return {"text": "The image is taking too long to process. Try a smaller/clearer photo."}
+        print(f"GPT Image Tutor Timeout Error after {max_retries} attempts")
+        # Return language-appropriate timeout message
+        target_lang = detect_language_from_history(prefs)
+        if target_lang == "Hinglish":
+            return {"text": "Photo process hone mein time lag raha hai. Ek chota ya clear photo try karo!"}
+        elif target_lang == "Hindi":
+            return {"text": "फोटो प्रोसेस होने में समय लग रहा है। एक छोटी या स्पष्ट फोटो भेजें!"}
+        elif target_lang == "Tamil":
+            return {"text": "புகைப்படம் செயலாக்க நேரம் அதிகமாகிறது. ஒரு சிறிய அல்லது தெளிவான புகைப்படத்தை முயற்சிக்கவும்!"}
+        else:
+            return {"text": "The image is taking too long to process. Try a smaller or clearer photo!"}
     except Exception as e:
         print(f"GPT Image Tutor Error: {e}")
-        return {"text": "I'm having trouble reading that photo. Try again with better lighting and focus."}
+        # Return language-appropriate error message
+        target_lang = detect_language_from_history(prefs)
+        if target_lang == "Hinglish":
+            return {"text": "Photo read nahi ho payi. Better lighting aur focus ke saath phir se try karo!"}
+        elif target_lang == "Hindi":
+            return {"text": "फोटो पढ़ नहीं पाया। बेहतर प्रकाश और फोकस के साथ फिर से प्रयास करें!"}
+        elif target_lang == "Tamil":
+            return {"text": "புகைப்படத்தை படிக்க முடியவில்லை. சிறந்த வெளிச்சம் மற்றும் கவனத்துடன் மீண்டும் முயற்சிக்கவும்!"}
+        else:
+            return {"text": "I'm having trouble reading that photo. Try again with better lighting and focus!"}
 
 # ============================================
 # MAIN BOT CLASS
