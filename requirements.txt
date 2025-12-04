@@ -18,6 +18,9 @@ matplotlib==3.8.0
 # Image hosting (Cloudinary for WhatsApp media)
 cloudinary==1.41.0
 
+# Analytics
+mixpanel==4.10.1
+
 # Server
 gunicorn==21.2.0
 
